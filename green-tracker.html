@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Green Tracker</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f5; --panel: #ffffff; --ink: #1d2320; --muted: #66706b; --line: #dfe3e0;
+    --accent: #1b5e20; --front: #1e88e5; --center: #fdd835; --back: #e53935; --warn: #b26a00;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--ink); background: var(--bg); }
+  #app { display: flex; height: 100vh; }
+  #side { width: 360px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
+  #side header { padding: 12px 14px 8px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 16px; margin: 0 0 8px; }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .row > * { flex: 1; min-width: 0; }
+  button, select, input[type=text] { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); }
+  button { cursor: pointer; flex: none; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:hover { filter: brightness(0.95); }
+  #wbStatus { font-size: 12px; color: var(--muted); }
+  #wbStatus.warn { color: var(--warn); }
+  #target { margin: 10px 14px; padding: 10px 12px; border-radius: 8px; background: #eef5ee; border: 1px solid #cfe3cf; }
+  #target .big { font-size: 22px; font-weight: 700; }
+  #target .hint { font-size: 12px; color: var(--muted); }
+  #gridWrap { flex: 1; overflow: auto; padding: 0 14px 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { position: sticky; top: 0; background: var(--panel); text-align: center; padding: 4px; border-bottom: 1px solid var(--line); font-weight: 600; }
+  td { text-align: center; padding: 2px; border-bottom: 1px solid #f0f2f0; }
+  td.hole { font-weight: 600; width: 34px; }
+  td.depth { font-size: 12px; color: var(--muted); width: 64px; }
+  td.depth.odd { color: var(--warn); font-weight: 600; }
+  .pt { display: inline-block; width: 100%; padding: 4px 0; border-radius: 4px; cursor: pointer; border: 2px solid transparent; color: var(--muted); }
+  .pt.done { color: #fff; font-weight: 600; }
+  .pt.F.done { background: var(--front); }
+  .pt.C.done { background: var(--center); color: #333; }
+  .pt.B.done { background: var(--back); }
+  .pt.active { border-color: var(--ink); }
+  #side footer { padding: 8px 14px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  #side footer .row button { flex: 1; }
+  #mapWrap { flex: 1; position: relative; }
+  #map { position: absolute; inset: 0; cursor: crosshair; }
+  #map.leaflet-container { cursor: crosshair; }
+  #cursor { position: absolute; left: 10px; bottom: 22px; z-index: 500; background: rgba(0,0,0,.65); color: #fff; padding: 3px 8px; border-radius: 4px; font: 12px ui-monospace, monospace; pointer-events: none; }
+  #banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 500; background: rgba(0,0,0,.72); color: #fff; padding: 6px 14px; border-radius: 20px; font-weight: 600; pointer-events: none; }
+  #toast { position: absolute; top: 50px; left: 50%; transform: translateX(-50%); z-index: 600; background: var(--accent); color: #fff; padding: 6px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  .mk { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; font: 700 10px system-ui, sans-serif; color: #fff; }
+  .mk.F { background: var(--front); } .mk.C { background: var(--center); color: #222; } .mk.B { background: var(--back); }
+  .mk.sel { box-shadow: 0 0 0 3px #000; }
+  kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: #fafafa; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <header>
+      <h1>Green Tracker</h1>
+      <div class="row">
+        <button id="loadBtn" class="primary">Open workbook…</button>
+        <button id="saveBtn">Download .xlsx</button>
+        <input id="fileIn" type="file" accept=".xlsx" hidden>
+      </div>
+      <div id="wbStatus" class="warn">No workbook open. Open your .xlsx so the download keeps its formatting.</div>
+      <div class="row" style="margin-top:8px">
+        <select id="courseSel"></select>
+      </div>
+      <form id="searchForm" class="row">
+        <input id="searchIn" type="text" placeholder="Search a place, or paste lat, lng">
+        <button type="submit">Go</button>
+      </form>
+    </header>
+    <div id="target">
+      <div class="big" id="targetText">Hole 1 — Front</div>
+      <div class="hint">Right-click the map to record. Click any cell below or any marker to redo it. Drag markers to fine-tune.</div>
+    </div>
+    <div id="gridWrap">
+      <table>
+        <thead><tr><th>Hole</th><th>Front</th><th>Center</th><th>Back</th><th title="Front-to-back distance">Depth</th></tr></thead>
+        <tbody id="grid"></tbody>
+      </table>
+    </div>
+    <footer>
+      <div class="row">
+        <button id="undoBtn">Undo</button>
+        <button id="clearHoleBtn">Clear hole</button>
+        <button id="copyBtn" title="Copy this course's B5:G22 as tab-separated text to paste into Excel">Copy rows</button>
+      </div>
+      <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo · <kbd>F</kbd>/<kbd>C</kbd>/<kbd>B</kbd> pick point · <kbd>[</kbd>/<kbd>]</kbd> prev/next hole<br>
+      Points save in this browser automatically.
+    </footer>
+  </aside>
+  <div id="mapWrap">
+    <div id="map"></div>
+    <div id="banner"></div>
+    <div id="toast"></div>
+    <div id="cursor">—</div>
+  </div>
+</div>
+<script>
+// Default course list mirrors the tabs in Vegas_Golf_GPS_Green_Coordinates.xlsx.
+// Opening a workbook replaces it with whatever course tabs that file has.
+const DEFAULT_COURSES = [["TPC Summerlin","TPC Summerlin",36.1912,-115.2995],["Bali Hai","Bali Hai Golf Club",36.0863,-115.1706],["LV Country Club","Las Vegas Country Club",36.1284,-115.1481],["LV National","Las Vegas National Golf Club",36.1221,-115.1235],["Wynn","Wynn Golf Club",36.1278,-115.1612],["Revere (Lexington)","The Revere Golf Club (Lexington)",35.9892,-115.0861],["Revere (Concord)","The Revere Golf Club (Concord)",35.9915,-115.0822],["Rio Secco","Rio Secco Golf Club",35.9984,-115.0683],["The Legacy","The Legacy Golf Club",36.0272,-115.0794],["Chimera","Chimera Golf Club",36.0355,-114.9701],["DragonRidge","DragonRidge Country Club",35.9961,-115.0485],["Anthem CC","Anthem Country Club",35.9855,-115.0991],["Reflection Bay","Reflection Bay Golf Club",36.1139,-114.9281],["SouthShore CC","SouthShore Country Club",36.1122,-114.9125],["TPC Las Vegas","TPC Las Vegas",36.1867,-115.3061],["Bears Best","Bears Best Las Vegas",36.1264,-115.3211],["Paiute (Snow Mtn)","Las Vegas Paiute Golf Resort (Snow Mountain)",36.3533,-115.3235],["Paiute (Sun Mtn)","Las Vegas Paiute Golf Resort (Sun Mountain)",36.3591,-115.3188],["Paiute (Wolf)","Las Vegas Paiute Golf Resort (Wolf)",36.3654,-115.3341],["Aliante","Aliante Golf Club",36.2794,-115.1833],["Shadow Creek","Shadow Creek Golf Course",36.2422,-115.1118],["Boulder Creek","Boulder Creek Golf Club",35.9522,-114.8625],["Cascata","Cascata Golf Club",35.9712,-114.8961]]
+  .map(([sheet, title, lat, lng]) => ({ sheet, title, lat, lng }));
+
+const HOLES = 18;
+const FIRST_ROW = 5;                 // hole 1 lives on row 5
+const PTS = ['F', 'C', 'B'];
+const PT_NAME = { F: 'Front', C: 'Center', B: 'Back' };
+const PT_COLS = { F: [2, 3], C: [4, 5], B: [6, 7] };  // B/C, D/E, F/G
+const STORE_KEY = 'greenTracker.v1';
+
+// ---------- state ----------
+let courses = DEFAULT_COURSES;
+let data = {};          // data[sheet][hole][pt] = [lat, lng]
+let views = {};         // views[sheet] = [lat, lng, zoom] last map view
+let history = [];       // undo stack: {sheet, hole, pt, prev}
+let workbook = null, workbookName = null;
+let cur = { sheet: courses[0].sheet, hole: 1, pt: 'F' };
+
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}');
+    data = s.data || {}; views = s.views || {};
+    if (s.cur && s.cur.sheet) cur = s.cur;
+  } catch (e) { /* storage unavailable: start empty */ }
+}
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify({ data, views, cur })); } catch (e) {}
+}
+const course = () => courses.find(c => c.sheet === cur.sheet) || courses[0];
+const pts = (sheet = cur.sheet) => (data[sheet] ||= {});
+const get = (sheet, hole, pt) => data[sheet]?.[hole]?.[pt] || null;
+
+function setPoint(sheet, hole, pt, ll, record = true) {
+  const prev = get(sheet, hole, pt);
+  if (record) history.push({ sheet, hole, pt, prev });
+  const h = (pts(sheet)[hole] ||= {});
+  if (ll) h[pt] = [round(ll[0]), round(ll[1])]; else delete h[pt];
+  save();
+}
+const round = v => Math.round(v * 1e7) / 1e7;
+
+function nextEmpty(sheet, hole, pt) {
+  const order = [];
+  for (let h = 1; h <= HOLES; h++) for (const p of PTS) order.push([h, p]);
+  const start = order.findIndex(([h, p]) => h === hole && p === pt);
+  for (let i = 1; i <= order.length; i++) {
+    const [h, p] = order[(start + i) % order.length];
+    if (!get(sheet, h, p)) return { hole: h, pt: p };
+  }
+  return null;
+}
+
+function yards(a, b) {
+  const R = 6371008.8, r = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * r, dLng = (b[1] - a[1]) * r;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x)) / 0.9144;
+}
+
+// ---------- map ----------
+const map = L.map('map', { zoomControl: true, maxZoom: 21 });
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 21, maxNativeZoom: 19,
+  attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics'
+}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+
+map.on('contextmenu', e => {
+  e.originalEvent.preventDefault();
+  record([e.latlng.lat, e.latlng.lng]);
+});
+map.on('mousemove', e => {
+  document.getElementById('cursor').textContent = `${e.latlng.lat.toFixed(6)}, ${e.latlng.lng.toFixed(6)}`;
+});
+map.on('moveend', () => {
+  const c = map.getCenter();
+  views[cur.sheet] = [c.lat, c.lng, map.getZoom()];
+  save();
+});
+
+function record(ll) {
+  const { sheet, hole, pt } = cur;
+  setPoint(sheet, hole, pt, ll);
+  toast(`Hole ${hole} ${PT_NAME[pt]} saved`);
+  const n = nextEmpty(sheet, hole, pt);
+  if (n) Object.assign(cur, n);
+  save();
+  render();
+}
+
+function goToCourse() {
+  const v = views[cur.sheet];
+  if (v) return map.setView([v[0], v[1]], v[2]);
+  const all = Object.values(pts()).flatMap(h => Object.values(h));
+  if (all.length) return map.fitBounds(all, { maxZoom: 18, padding: [40, 40] });
+  map.setView([course().lat, course().lng], 16);
+}
+
+// ---------- rendering ----------
+function render() {
+  fillCourseSelect();
+  const { sheet, hole, pt } = cur;
+  const done = !nextEmpty(sheet, hole, pt) && get(sheet, hole, pt);
+  document.getElementById('targetText').textContent = done ? 'Course complete ✓' : `Hole ${hole} — ${PT_NAME[pt]}`;
+  document.getElementById('banner').textContent = done
+    ? `${course().title}: all ${HOLES} holes done`
+    : `Right-click: Hole ${hole} ${PT_NAME[pt]}`;
+
+  const rows = [];
+  for (let h = 1; h <= HOLES; h++) {
+    const cells = PTS.map(p => {
+      const has = get(sheet, h, p);
+      const act = h === hole && p === pt;
+      return `<td><span class="pt ${p}${has ? ' done' : ''}${act ? ' active' : ''}" data-h="${h}" data-p="${p}">${has ? '✓' : '·'}</span></td>`;
+    }).join('');
+    const f = get(sheet, h, 'F'), b = get(sheet, h, 'B');
+    let depth = '', odd = false;
+    if (f && b) { const y = yards(f, b); depth = `${y.toFixed(0)} yd`; odd = y < 12 || y > 60; }
+    rows.push(`<tr><td class="hole">${h}</td>${cells}<td class="depth${odd ? ' odd' : ''}" title="${odd ? 'Unusual green depth — double-check' : ''}">${depth}</td></tr>`);
+  }
+  document.getElementById('grid').innerHTML = rows.join('');
+
+  layer.clearLayers();
+  for (let h = 1; h <= HOLES; h++) {
+    const line = PTS.map(p => get(sheet, h, p)).filter(Boolean);
+    if (line.length > 1) L.polyline(line, { color: '#fff', weight: 1.5, opacity: .8, interactive: false }).addTo(layer);
+    for (const p of PTS) {
+      const ll = get(sheet, h, p);
+      if (!ll) continue;
+      const sel = h === hole && p === pt;
+      const m = L.marker(ll, {
+        draggable: true, zIndexOffset: sel ? 1000 : 0,
+        icon: L.divIcon({ className: '', html: `<div class="mk ${p}${sel ? ' sel' : ''}">${h}${p}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] })
+      }).addTo(layer);
+      m.on('click', () => { Object.assign(cur, { hole: h, pt: p }); save(); render(); });
+      m.on('dragend', () => { const q = m.getLatLng(); setPoint(sheet, h, p, [q.lat, q.lng]); render(); });
+    }
+  }
+}
+
+document.getElementById('grid').addEventListener('click', e => {
+  const t = e.target.closest('.pt');
+  if (!t) return;
+  cur.hole = +t.dataset.h; cur.pt = t.dataset.p;
+  save(); render();
+  const ll = get(cur.sheet, cur.hole, cur.pt);
+  if (ll) map.panTo(ll);
+});
+
+function fillCourseSelect() {
+  const sel = document.getElementById('courseSel');
+  sel.innerHTML = courses.map(c => {
+    const n = Object.values(data[c.sheet] || {}).reduce((s, h) => s + Object.keys(h).length, 0);
+    return `<option value="${esc(c.sheet)}">${esc(c.title)} (${Math.round(n / (HOLES * 3) * 100)}%)</option>`;
+  }).join('');
+  if (!courses.some(c => c.sheet === cur.sheet)) cur.sheet = courses[0].sheet;
+  sel.value = cur.sheet;
+}
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+document.getElementById('courseSel').addEventListener('change', e => {
+  cur.sheet = e.target.value;
+  fillCourseSelect();                     // refresh progress percentages
+  const n = nextEmpty(cur.sheet, HOLES, 'B');
+  Object.assign(cur, n || { hole: 1, pt: 'F' });
+  save(); goToCourse(); render();
+});
+
+// ---------- search / jump ----------
+document.getElementById('searchForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const q = document.getElementById('searchIn').value.trim();
+  if (!q) return;
+  const m = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) return map.setView([+m[1], +m[2]], 18);
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    if (!j.length) return toast('No match found');
+    map.setView([+j[0].lat, +j[0].lon], 16);
+  } catch (err) { toast('Search failed'); }
+});
+
+// ---------- undo / clear / keys ----------
+function undo() {
+  const h = history.pop();
+  if (!h) return toast('Nothing to undo');
+  setPoint(h.sheet, h.hole, h.pt, h.prev, false);
+  if (h.sheet !== cur.sheet) { cur.sheet = h.sheet; fillCourseSelect(); goToCourse(); }
+  Object.assign(cur, { hole: h.hole, pt: h.pt });
+  save(); render();
+}
+document.getElementById('undoBtn').onclick = undo;
+document.getElementById('clearHoleBtn').onclick = () => {
+  if (!confirm(`Clear all three points on hole ${cur.hole}?`)) return;
+  for (const p of PTS) if (get(cur.sheet, cur.hole, p)) setPoint(cur.sheet, cur.hole, p, null);
+  cur.pt = 'F'; save(); render();
+};
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select')) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return undo(); }
+  const k = e.key.toUpperCase();
+  if (PTS.includes(k)) { cur.pt = k; save(); render(); }
+  else if (e.key === '[' && cur.hole > 1) { cur.hole--; save(); render(); }
+  else if (e.key === ']' && cur.hole < HOLES) { cur.hole++; save(); render(); }
+});
+
+// ---------- copy rows (fallback to pasting into Excel) ----------
+document.getElementById('copyBtn').onclick = async () => {
+  const lines = [];
+  for (let h = 1; h <= HOLES; h++)
+    lines.push(PTS.flatMap(p => get(cur.sheet, h, p) || ['', '']).join('\t'));
+  try { await navigator.clipboard.writeText(lines.join('\n')); toast(`Copied — paste into cell B${FIRST_ROW} of "${cur.sheet}"`); }
+  catch (e) { toast('Clipboard blocked by browser'); }
+};
+
+// ---------- workbook in / out ----------
+document.getElementById('loadBtn').onclick = () => document.getElementById('fileIn').click();
+document.getElementById('fileIn').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try {
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await f.arrayBuffer());
+    const found = [];
+    let imported = 0, kept = 0;
+    wb.eachSheet(ws => {
+      if (String(ws.getCell('A4').value).trim() !== 'Hole') return;
+      const sub = String(ws.getCell('A2').value || '');
+      const m = sub.match(/(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/);
+      const def = DEFAULT_COURSES.find(c => c.sheet === ws.name);
+      found.push({ sheet: ws.name, title: String(ws.getCell('A1').value || ws.name),
+                   lat: m ? +m[1] : def?.lat ?? 36.17, lng: m ? +m[2] : def?.lng ?? -115.14 });
+      for (let h = 1; h <= HOLES; h++) {
+        const row = ws.getRow(FIRST_ROW + h - 1);
+        for (const p of PTS) {
+          const lat = num(row.getCell(PT_COLS[p][0]).value), lng = num(row.getCell(PT_COLS[p][1]).value);
+          if (lat != null && lng != null) {
+            const mine = get(ws.name, h, p);
+            if (mine && (Math.abs(mine[0] - lat) > 1e-7 || Math.abs(mine[1] - lng) > 1e-7)) { kept++; continue; }
+            (pts(ws.name)[h] ||= {})[p] = [lat, lng]; imported++;
+          }
+        }
+      }
+    });
+    if (!found.length) throw new Error('No course tabs found (expected "Hole" in cell A4).');
+    workbook = wb; workbookName = f.name; courses = found; history = [];
+    save(); fillCourseSelect(); goToCourse(); render();
+    const st = document.getElementById('wbStatus');
+    st.className = '';
+    st.textContent = `${f.name}: ${found.length} courses, ${imported} points read from file` +
+      (kept ? `, ${kept} newer points from this browser kept` : '') + '.';
+  } catch (err) {
+    alert('Could not read that workbook: ' + err.message);
+  }
+  e.target.value = '';
+});
+const num = v => {
+  if (v && typeof v === 'object' && 'result' in v) v = v.result;   // formula cells
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+document.getElementById('saveBtn').onclick = async () => {
+  const wb = workbook || buildBlankWorkbook();
+  for (const c of courses) {
+    const ws = wb.getWorksheet(c.sheet);
+    if (!ws) continue;
+    for (let h = 1; h <= HOLES; h++) {
+      const row = ws.getRow(FIRST_ROW + h - 1);
+      for (const p of PTS) {
+        const ll = get(c.sheet, h, p);
+        row.getCell(PT_COLS[p][0]).value = ll ? ll[0] : null;
+        row.getCell(PT_COLS[p][1]).value = ll ? ll[1] : null;
+      }
+      row.commit();
+    }
+  }
+  const buf = await wb.xlsx.writeBuffer();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  a.download = workbookName || 'Vegas_Golf_GPS_Green_Coordinates.xlsx';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+
+// Same layout as the original workbook, used only when none was opened.
+function buildBlankWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  const head = ['Hole', 'Front Lat', 'Front Lng', 'Center Lat', 'Center Lng', 'Back Lat', 'Back Lng', 'Notes'];
+  for (const c of courses) {
+    const ws = wb.addWorksheet(c.sheet);
+    ws.getCell('A1').value = c.title;
+    ws.getCell('A1').font = { bold: true, size: 14 };
+    ws.getCell('A2').value = `Search this in Google Maps, or paste this to jump there: ${c.lat}, ${c.lng}`;
+    ws.getRow(4).values = head;
+    ws.getRow(4).eachCell(cell => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B5E20' } };
+    });
+    ws.columns = [{ width: 7 }, ...Array(6).fill({ width: 16 }), { width: 30 }];
+    for (let h = 1; h <= HOLES; h++) {
+      const row = ws.getRow(FIRST_ROW + h - 1);
+      row.getCell(1).value = h;
+      for (let col = 2; col <= 7; col++)
+        row.getCell(col).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF9C4' } };
+    }
+  }
+  return wb;
+}
+
+// ---------- misc ----------
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1400);
+}
+window.addEventListener('beforeunload', save);
+
+load();
+fillCourseSelect();
+goToCourse();
+render();
+</script>
+</body>
+</html>
